@@ -2,6 +2,7 @@
 
 import pymysql
 import datetime
+import re
 
 
 def get_table_cols(cursor,dbname,tabname):
@@ -35,7 +36,7 @@ def get_tables(cursor):
 
 def insert_checksums_table(db,cursor,dbname,tabname):
     cols=get_table_cols(cursor,dbname,tabname)
-    sql = "REPLACE INTO `wstest`.`checksums` \
+    sql = "REPLACE INTO `percona`.`checksums` \
             (db, tbl, chunk, chunk_index, lower_boundary, upper_boundary, this_cnt, this_crc) \
             SELECT '" + dbname + "', '" + tabname + "', '1', 'PRIMARY', '1', '1000', COUNT(*) AS cnt, \
             COALESCE(LOWER(CONV(BIT_XOR(CAST(CRC32(CONCAT_WS('#'," + cols + ")) AS UNSIGNED)), 10, 16)), 0) AS crc  \
@@ -60,7 +61,7 @@ def insert_checksums_table(db,cursor,dbname,tabname):
 
 def create_checksum_table(cursor):
 
-    sql="""CREATE TABLE if not exists wstest.`checksums` (\
+    sql="""CREATE TABLE if not exists percona.`checksums` (\
     `db` char(64) NOT NULL,\
     `tbl` char(64) NOT NULL,\
     `chunk` int(11) NOT NULL,\
@@ -78,13 +79,13 @@ def create_checksum_table(cursor):
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8"""
     try:
         cursor.execute(sql)
-        cursor.execute("truncate wstest.checksums")
+        cursor.execute("truncate percona.checksums")
     except:
         return 0
 
 
 def update_checksum_table(db,cursor,chunk_time,this_crc,this_cnt,dbname,tabname):
-    sql="UPDATE `wstest`.`checksums` \
+    sql="UPDATE `percona`.`checksums` \
     SET chunk_time = '"+str(chunk_time)+"', master_crc = '"+this_crc+"', master_cnt = "+str(this_cnt)+" \
     WHERE db = '"+dbname+"' AND tbl = '"+tabname+"' AND chunk = 1"
 
@@ -102,6 +103,7 @@ def set_session_variables(cursor):
         cursor.execute('SET SESSION innodb_lock_wait_timeout = 1')
         cursor.execute('SET SESSION wait_timeout = 10000')
         cursor.execute("SET SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION'")
+        cursor.execute("SET　@@binlog_format = 'STATEMENT'")
         cursor.execute('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ')
         cursor.execute('SET @@SQL_QUOTE_SHOW_CREATE = 1')
         return 1
@@ -109,9 +111,27 @@ def set_session_variables(cursor):
         return 0
 
 
+def get_slave_host():
+    slave_list = []
+    db = pymysql.connect("192.168.1.154", "dbamgr", "De0ca71106a4e4d1")
+
+    # 使用 cursor() 方法创建一个游标对象 cursor
+    cursor = db.cursor()
+    cursor.execute("show processlist")
+
+    for res in cursor.fetchall():
+        #print(res[4])
+        if re.match('Binlog Dump',res[4]):
+            host = res[2].split(':',1)[0]
+            slave_list.append(host)
+
+
+    db.close()
+    return  slave_list
+
 def task_master():
     # 打开数据库连接
-    db = pymysql.connect("rm-bp188fb70hknd9gi2o.mysql.rds.aliyuncs.com", "devuser", "Devuser123", "basedatadb")
+    db = pymysql.connect("192.168.1.154", "dbamgr", "De0ca71106a4e4d1")
 
     # 使用 cursor() 方法创建一个游标对象 cursor
     cursor = db.cursor()
@@ -123,7 +143,7 @@ def task_master():
     for dbname,tabname in tables:
         chunk_time = insert_checksums_table(db,cursor,dbname,tabname)
         if chunk_time:
-            sql="select this_crc,this_cnt from wstest.checksums where db='" +dbname+"' \
+            sql="select this_crc,this_cnt from percona.checksums where db='" +dbname+"' \
             and tbl='"+tabname+"' and chunk=1"
 
             cursor.execute(sql)
@@ -142,30 +162,34 @@ def task_master():
     # 关闭数据库连接
     db.close()
 
-def check_slave():
-    db = pymysql.connect("rr-bp1y172q0p1808b7klo.mysql.rds.aliyuncs.com", "devuser", "Devuser123", "wstest")
+def check_slave(hosts):
+    for slave in hosts:
+        db = pymysql.connect(slave, "dbamgr", "De0ca71106a4e4d1", "percona")
 
-    # 使用 cursor() 方法创建一个游标对象 cursor
-    cursor = db.cursor()
-    sql="""SELECT
-    CONCAT(db, '.', tbl)
-    AS
-    `table`, chunk, chunk_index, lower_boundary, upper_boundary, COALESCE(this_cnt - master_cnt, 0)
-    AS
-    cnt_diff, COALESCE(this_crc <> master_crc
-    OR
-    ISNULL(master_crc) <> ISNULL(this_crc), 0) AS
-    crc_diff, this_cnt, master_cnt, this_crc, master_crc
-    FROM `wstest`.`checksums`
-    WHERE(master_cnt <> this_cnt
-    OR master_crc <> this_crc
-    OR ISNULL(master_crc) <> ISNULL(this_crc))"""
-    cursor.execute(sql)
-    result=cursor.fetchall()
-    print(result)
+        # 使用 cursor() 方法创建一个游标对象 cursor
+        cursor = db.cursor()
+
+        sql="""SELECT
+        CONCAT(db, '.', tbl)
+        AS
+        `table`, chunk, chunk_index, lower_boundary, upper_boundary, COALESCE(this_cnt - master_cnt, 0)
+        AS
+        cnt_diff, COALESCE(this_crc <> master_crc
+        OR
+        ISNULL(master_crc) <> ISNULL(this_crc), 0) AS
+        crc_diff, this_cnt, master_cnt, this_crc, master_crc
+        FROM `checksums`
+        WHERE(master_cnt <> this_cnt
+        OR master_crc <> this_crc
+        OR ISNULL(master_crc) <> ISNULL(this_crc))"""
+        cursor.execute(sql)
+        result=cursor.fetchall()
+        print(result)
 
 if __name__ == '__main__':
     task_master()
-    check_slave()
+    slave_hosts = get_slave_host()
+
+    check_slave(slave_hosts)
 
 
