@@ -44,7 +44,7 @@ def insert_checksums_table(db,cursor,dbname,tabname):
 
     if cols:
         try:
-            set_session_variables(cursor)
+            #set_session_variables(cursor)
             cursor.execute("select  @@binlog_format")
             if cursor.fetchone()[0] == "STATEMENT":
 
@@ -87,6 +87,7 @@ def create_checksum_table(cursor):
         cursor.execute(sql)
         cursor.execute("truncate percona.checksums")
     except:
+        print("checksums表初始化失败！")
         return 0
 
 
@@ -96,10 +97,11 @@ def update_checksum_table(db,cursor,chunk_time,this_crc,this_cnt,dbname,tabname)
     WHERE db = '"+dbname+"' AND tbl = '"+tabname+"' AND chunk = 1"
 
     try:
-        set_session_variables(cursor)
+        #set_session_variables(cursor)
         cursor.execute(sql)
         db.commit()
     except:
+
         db.rollback()
 
 def set_session_variables(cursor):
@@ -113,11 +115,12 @@ def set_session_variables(cursor):
         cursor.execute('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ')
         cursor.execute('SET @@SQL_QUOTE_SHOW_CREATE = 1')
         return 1
-    except:
+    except :
+        print("账号可能没有Super权限")
         return 0
 
-
-def get_slave_host():
+"""
+def get_SH_host():
     slave_list = []
     db = pymysql.connect("192.168.1.154", "dbamgr", "De0ca71106a4e4d1")
 
@@ -134,10 +137,10 @@ def get_slave_host():
 
     db.close()
     return  slave_list
-
-def task_master():
+"""
+def source(host,port):
     # 打开数据库连接
-    db = pymysql.connect("192.168.1.154", "dbamgr", "De0ca71106a4e4d1")
+    db = pymysql.connect(host, "dbamgr", "De0ca71106a4e4d1",None,port)
 
     # 使用 cursor() 方法创建一个游标对象 cursor
     cursor = db.cursor()
@@ -168,14 +171,14 @@ def task_master():
     # 关闭数据库连接
     db.close()
 
-def check_slave(hosts):
-    for slave in hosts:
-        db = pymysql.connect(slave, "dbamgr", "De0ca71106a4e4d1", "percona")
+def target(host,port):
+
+    db = pymysql.connect(host, "dbamgr", "De0ca71106a4e4d1", "percona",port)
 
         # 使用 cursor() 方法创建一个游标对象 cursor
-        cursor = db.cursor()
+    cursor = db.cursor()
 
-        sql="""SELECT
+    sql="""SELECT
         CONCAT(db, '.', tbl)
         AS
         `table`, chunk, chunk_index, lower_boundary, upper_boundary, COALESCE(this_cnt - master_cnt, 0)
@@ -188,14 +191,42 @@ def check_slave(hosts):
         WHERE(master_cnt <> this_cnt
         OR master_crc <> this_crc
         OR ISNULL(master_crc) <> ISNULL(this_crc))"""
-        cursor.execute(sql)
-        result=cursor.fetchall()
-        print(result)
+    cursor.execute(sql)
+    result=cursor.fetchall()
+    print(result)
 
 if __name__ == '__main__':
-    task_master()
-    slave_hosts = get_slave_host()
+    db = pymysql.connect("rm-bp16270lw98n23fy0po.mysql.rds.aliyuncs.com", "qauser", "Qauser123", "dmsdb",3306)
+    # 使用 cursor() 方法创建一个游标对象 cursor
+    cursor = db.cursor()
 
-    check_slave(slave_hosts)
+    cursor.execute("SELECT id,host,port FROM `dmsdb`.`datasource` where name='hz_base_regiondb'")
+
+
+    s = cursor.fetchone()
+
+    source_id = s[0]
+    source_host = s[1]
+    source_port = s[2]
+
+
+    source_db = 'hz_base_regiondb'
+    cursor.execute("SELECT sid,host,port FROM `dmsdb`.`datasource` where main_id='"+str(source_id)+"'")
+
+    t = cursor.fetchone()
+
+    target_db = t[0]
+    target_host = t[1]
+    target_port = t[2]
+
+
+    #source(source_host,source_port)
+
+    print(target_port)
+
+    target(target_host,target_port)
+
+    """            TS ERRORS  DIFFS     ROWS  CHUNKS SKIPPED    TIME TABLE
+04-15T14:14:27      0      5   262144       6       0   1.637 testdb.a"""
 
 
