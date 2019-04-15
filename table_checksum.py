@@ -41,9 +41,12 @@ def insert_checksums_table(db,cursor,dbname,tabname):
             SELECT '" + dbname + "', '" + tabname + "', '1', 'PRIMARY', '1', '1000', COUNT(*) AS cnt, \
             COALESCE(LOWER(CONV(BIT_XOR(CAST(CRC32(CONCAT_WS('#'," + cols + ")) AS UNSIGNED)), 10, 16)), 0) AS crc  \
             FROM `" + dbname + "`.`" + tabname + "` FORCE INDEX(`PRIMARY`) WHERE ((`id` >= '1')) AND ((`id` <= '1000'))"
+
     if cols:
         try:
             set_session_variables(cursor)
+            cursor.execute("select  @@binlog_format")
+            print(cursor.fetchall())
             starttime = datetime.datetime.now()
 
             cursor.execute(sql)
@@ -103,7 +106,7 @@ def set_session_variables(cursor):
         cursor.execute('SET SESSION innodb_lock_wait_timeout = 1')
         cursor.execute('SET SESSION wait_timeout = 10000')
         cursor.execute("SET SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION'")
-        cursor.execute("SET　@@binlog_format = 'STATEMENT'")
+        cursor.execute("SET @@binlog_format = 'STATEMENT'")
         cursor.execute('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ')
         cursor.execute('SET @@SQL_QUOTE_SHOW_CREATE = 1')
         return 1
@@ -120,7 +123,7 @@ def get_slave_host():
     cursor.execute("show processlist")
 
     for res in cursor.fetchall():
-        #print(res[4])
+
         if re.match('Binlog Dump',res[4]):
             host = res[2].split(':',1)[0]
             slave_list.append(host)
