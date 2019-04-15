@@ -46,14 +46,17 @@ def insert_checksums_table(db,cursor,dbname,tabname):
         try:
             set_session_variables(cursor)
             cursor.execute("select  @@binlog_format")
-            print(cursor.fetchall())
-            starttime = datetime.datetime.now()
+            if cursor.fetchone()[0] == "STATEMENT":
 
-            cursor.execute(sql)
-            db.commit()
-            endtime = datetime.datetime.now()
+                starttime = datetime.datetime.now()
 
-            chunk_time=round(endtime.timestamp() - starttime.timestamp(),6)
+                cursor.execute(sql)
+                db.commit()
+                endtime = datetime.datetime.now()
+
+                chunk_time=round(endtime.timestamp() - starttime.timestamp(),6)
+            else:
+                chunk_time = 0
             return chunk_time
         except:
             db.rollback()
