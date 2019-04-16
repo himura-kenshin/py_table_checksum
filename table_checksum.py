@@ -4,9 +4,29 @@ import pymysql
 import datetime
 from Crypto.Cipher import AES
 import binascii
-
-
 from hashlib import sha1
+
+class MysqlInstance:
+    # pymysql connection
+    conn = None
+
+    # connection string
+
+    def __init__(self, *urls):
+        self.host = urls[0]
+        self.user = urls[1]
+        self.passwd = urls[2]
+        self.db  =  urls[3]
+        self.port = urls[4]
+
+    def connect(self):
+
+        self.conn = pymysql.connect(self.host,self.user,self.passwd,self.db,self.port)
+        return self.conn
+
+    def close(self):
+        self.conn.close()
+
 
 def get_table_cols(cursor,dbname,tabname):
 
@@ -142,10 +162,10 @@ def get_SH_host():
 """
 def source(host,port,username,password):
     # 打开数据库连接
-    db = pymysql.connect(host, username, password,None,port)
-
+    db = MysqlInstance(host, username, password,None,port)
+    connect = db.connect()
     # 使用 cursor() 方法创建一个游标对象 cursor
-    cursor = db.cursor()
+    cursor = connect.cursor()
 
     create_checksum_table(cursor)
 
@@ -175,10 +195,11 @@ def source(host,port,username,password):
 
 def target(host,port,username,password):
 
-    db = pymysql.connect(host, username, password, "percona",port)
+    db = MysqlInstance(host, username, password, "percona",port)
+    connect = db.connect()
 
     # 使用 cursor() 方法创建一个游标对象 cursor
-    cursor = db.cursor()
+    cursor = connect.cursor()
 
     sql="""SELECT
         CONCAT(db, '.', tbl)
@@ -196,6 +217,8 @@ def target(host,port,username,password):
     cursor.execute(sql)
     result=cursor.fetchall()
     print(result)
+
+    db.close()
 
 #解密
 def decrypt(data, key):
@@ -228,12 +251,12 @@ def encrypt(text,key):
 
 
 if __name__ == '__main__':
-    db = pymysql.connect("rm-bp16270lw98n23fy0po.mysql.rds.aliyuncs.com", "qauser", "Qauser123", "dmsdb",3306)
+    db = MysqlInstance("rm-bp16270lw98n23fy0po.mysql.rds.aliyuncs.com", "qauser", "Qauser123", "dmsdb",3306)
+    connect = db.connect()
     # 使用 cursor() 方法创建一个游标对象 cursor
-    cursor = db.cursor()
+    cursor = connect.cursor()
 
     cursor.execute("SELECT id,host,port,username,password FROM `dmsdb`.`datasource` where name='hz_base_regiondb'")
-
 
     s = cursor.fetchone()
 
