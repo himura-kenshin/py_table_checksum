@@ -140,9 +140,9 @@ def get_SH_host():
     db.close()
     return  slave_list
 """
-def source(host,port):
+def source(host,port,username,password):
     # 打开数据库连接
-    db = pymysql.connect(host, "dbamgr", "De0ca71106a4e4d1",None,port)
+    db = pymysql.connect(host, username, password,None,port)
 
     # 使用 cursor() 方法创建一个游标对象 cursor
     cursor = db.cursor()
@@ -173,9 +173,9 @@ def source(host,port):
     # 关闭数据库连接
     db.close()
 
-def target(host,port):
+def target(host,port,username,password):
 
-    db = pymysql.connect(host, "dbamgr", "De0ca71106a4e4d1", "percona",port)
+    db = pymysql.connect(host, username, password, "percona",port)
 
     # 使用 cursor() 方法创建一个游标对象 cursor
     cursor = db.cursor()
@@ -197,15 +197,34 @@ def target(host,port):
     result=cursor.fetchall()
     print(result)
 
-def aes_decode(data, key):
+#解密
+def decrypt(data, key):
     """aes解密
     :param key:
     :param data:
     """
-    cipher = AES.new(key, AES.MODE_CBC, key)
-    result2 = binascii.a2b_hex(data)  # 十六进制还原成二进制
-    decrypted = cipher.decrypt(result2)
-    return decrypted.rstrip(b'\0')  # 解密完成后将加密时添加的多余字符'\0'删除
+    cipher = AES.new(key, AES.MODE_ECB)
+    result = binascii.a2b_hex(data)  # 十六进制还原成二进制
+    decrypted = cipher.decrypt(result)
+    return decrypted.rstrip(b'\x10')  # 解密完成后将加密时添加的多余字符'\0'删除
+
+"""
+加密函数
+def encrypt(text,key):
+    cryptor = AES.new(key, AES.MODE_ECB)
+    # 这里密钥key 长度必须为16（AES-128）、24（AES-192）、或32（AES-256）Bytes 长度.目前AES-128足够用
+    length = 16
+    count = len(text)
+    if (count % length != 0):
+        add = length - (count % length)
+    else:
+        add = 0
+    text = text + ('\x10' * add)
+    ciphertext = cryptor.encrypt(text)
+        # 因为AES加密时候得到的字符串不一定是ascii字符集的，输出到终端或者保存时候可能存在问题
+        # 所以这里统一把加密后的字符串转化为16进制字符串
+    return binascii.b2a_hex(ciphertext)
+"""
 
 
 if __name__ == '__main__':
@@ -222,7 +241,11 @@ if __name__ == '__main__':
     source_host = s[1]
     source_port = s[2]
     source_username = s[3]
-    source_password = s[4]
+    key = source_host+source_username
+    s1 = sha1()
+    s1.update(key.encode())
+    key = s1.digest()
+    source_password = decrypt(s[4],key[:16])
 
 
     source_db = 'hz_base_regiondb'
@@ -234,24 +257,16 @@ if __name__ == '__main__':
     target_host = t[1]
     target_port = t[2]
     target_username = t[3]
-    target_password = t[4]
-
     key = target_host+target_username
-
-    print(key)
-
     s1 = sha1()
     s1.update(key.encode())
     key = s1.digest()
+    target_password = decrypt(t[4],key[:16])
+
+    source(source_host,source_port,source_username,source_password)
 
 
-    print( aes_decode(target_password,s1.digest()) )
-
-
-    #source(source_host,source_port)
-
-
-    #target(target_host,target_port)
+    target(target_host,target_port,target_username,target_password)
 
 """                TS ERRORS    DIFFS     ROWS  CHUNKS SKIPPED   TIME TABLE
 04-15T14:14:27      0      5   262144       6       0   1.637    testdb.a
