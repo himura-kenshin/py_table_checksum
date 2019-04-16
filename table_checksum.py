@@ -2,8 +2,11 @@
 
 import pymysql
 import datetime
-import re
+from Crypto.Cipher import AES
 import binascii
+
+
+from hashlib import sha1
 
 def get_table_cols(cursor,dbname,tabname):
 
@@ -16,7 +19,6 @@ def get_table_cols(cursor,dbname,tabname):
     except:
 
         return  0
-
 
 
 def get_tables(cursor):
@@ -195,6 +197,17 @@ def target(host,port):
     result=cursor.fetchall()
     print(result)
 
+def aes_decode(data, key):
+    """aes解密
+    :param key:
+    :param data:
+    """
+    cipher = AES.new(key, AES.MODE_CBC, key)
+    result2 = binascii.a2b_hex(data)  # 十六进制还原成二进制
+    decrypted = cipher.decrypt(result2)
+    return decrypted.rstrip(b'\0')  # 解密完成后将加密时添加的多余字符'\0'删除
+
+
 if __name__ == '__main__':
     db = pymysql.connect("rm-bp16270lw98n23fy0po.mysql.rds.aliyuncs.com", "qauser", "Qauser123", "dmsdb",3306)
     # 使用 cursor() 方法创建一个游标对象 cursor
@@ -222,13 +235,21 @@ if __name__ == '__main__':
     target_port = t[2]
     target_username = t[3]
     target_password = t[4]
-    print(target_password)
 
-    print(binascii.a2b_hex(target_password))
+    key = target_host+target_username
+
+    print(key)
+
+    s1 = sha1()
+    s1.update(key.encode())
+    key = s1.digest()
+
+
+    print( aes_decode(target_password,s1.digest()) )
+
 
     #source(source_host,source_port)
 
-    print(target_port)
 
     #target(target_host,target_port)
 
