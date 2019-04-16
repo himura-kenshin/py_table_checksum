@@ -3,7 +3,7 @@
 import pymysql
 import datetime
 import re
-
+import binascii
 
 def get_table_cols(cursor,dbname,tabname):
 
@@ -175,7 +175,7 @@ def target(host,port):
 
     db = pymysql.connect(host, "dbamgr", "De0ca71106a4e4d1", "percona",port)
 
-        # 使用 cursor() 方法创建一个游标对象 cursor
+    # 使用 cursor() 方法创建一个游标对象 cursor
     cursor = db.cursor()
 
     sql="""SELECT
@@ -200,7 +200,7 @@ if __name__ == '__main__':
     # 使用 cursor() 方法创建一个游标对象 cursor
     cursor = db.cursor()
 
-    cursor.execute("SELECT id,host,port FROM `dmsdb`.`datasource` where name='hz_base_regiondb'")
+    cursor.execute("SELECT id,host,port,username,password FROM `dmsdb`.`datasource` where name='hz_base_regiondb'")
 
 
     s = cursor.fetchone()
@@ -208,25 +208,32 @@ if __name__ == '__main__':
     source_id = s[0]
     source_host = s[1]
     source_port = s[2]
+    source_username = s[3]
+    source_password = s[4]
 
 
     source_db = 'hz_base_regiondb'
-    cursor.execute("SELECT sid,host,port FROM `dmsdb`.`datasource` where main_id='"+str(source_id)+"'")
+    cursor.execute("SELECT sid,host,port,username,password FROM `dmsdb`.`datasource` where main_id='"+str(source_id)+"'")
 
     t = cursor.fetchone()
 
     target_db = t[0]
     target_host = t[1]
     target_port = t[2]
+    target_username = t[3]
+    target_password = t[4]
+    print(target_password)
 
+    print(binascii.a2b_hex(target_password))
 
     #source(source_host,source_port)
 
     print(target_port)
 
-    target(target_host,target_port)
+    #target(target_host,target_port)
 
-    """            TS ERRORS  DIFFS     ROWS  CHUNKS SKIPPED    TIME TABLE
-04-15T14:14:27      0      5   262144       6       0   1.637 testdb.a"""
+"""                TS ERRORS    DIFFS     ROWS  CHUNKS SKIPPED   TIME TABLE
+04-15T14:14:27      0      5   262144       6       0   1.637    testdb.a
+"""
 
 
