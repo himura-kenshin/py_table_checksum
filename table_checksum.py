@@ -6,27 +6,6 @@ from Crypto.Cipher import AES
 import binascii
 from hashlib import sha1
 
-class MysqlInstance:
-    # pymysql connection
-    conn = None
-
-    # connection string
-
-    def __init__(self, *urls):
-        self.host = urls[0]
-        self.user = urls[1]
-        self.passwd = urls[2]
-        self.db  =  urls[3]
-        self.port = urls[4]
-
-    def connect(self):
-
-        self.conn = pymysql.connect(self.host,self.user,self.passwd,self.db,self.port)
-        return self.conn
-
-    def close(self):
-        self.conn.close()
-
 
 def get_table_cols(cursor,dbname,tabname):
 
@@ -41,14 +20,15 @@ def get_table_cols(cursor,dbname,tabname):
         return  0
 
 
-def get_tables(cursor):
+def get_tables(cursor,dbname):
     sql="select a.TABLE_SCHEMA,a.TABLE_NAME from information_schema.TABLES a,information_schema.COLUMNS b \
     where a.ENGINE='InnoDB' \
-    and a.table_schema not in ('information_schema','performance_schema','percona','sys','undolog','mysql') \
+    and a.table_schema ='"+dbname+"' \
     and a.TABLE_NAME=b.TABLE_NAME \
     and a.table_schema=b.table_schema \
     and b.column_name='id'"
     try:
+
         cursor.execute(sql)
         tables=cursor.fetchall()
         return tables
@@ -56,8 +36,10 @@ def get_tables(cursor):
         return 0
 
 
-def insert_checksums_table(db,cursor,dbname,tabname):
+def insert_checksums_table(db,dbname,tabname):
+    cursor = db.cursor()
     cols=get_table_cols(cursor,dbname,tabname)
+
     sql = "REPLACE INTO `percona`.`checksums` \
             (db, tbl, chunk, chunk_index, lower_boundary, upper_boundary, this_cnt, this_crc) \
             SELECT '" + dbname + "', '" + tabname + "', '1', 'PRIMARY', '1', '1000', COUNT(*) AS cnt, \
@@ -66,7 +48,7 @@ def insert_checksums_table(db,cursor,dbname,tabname):
 
     if cols:
         try:
-            #set_session_variables(cursor)
+            set_session_variables(cursor)
             cursor.execute("select  @@binlog_format")
             if cursor.fetchone()[0] == "STATEMENT":
 
@@ -113,13 +95,14 @@ def create_checksum_table(cursor):
         return 0
 
 
-def update_checksum_table(db,cursor,chunk_time,this_crc,this_cnt,dbname,tabname):
+def update_checksum_table(db,chunk_time,this_crc,this_cnt,dbname,tabname):
+    cursor = db.cursor()
     sql="UPDATE `percona`.`checksums` \
     SET chunk_time = '"+str(chunk_time)+"', master_crc = '"+this_crc+"', master_cnt = "+str(this_cnt)+" \
     WHERE db = '"+dbname+"' AND tbl = '"+tabname+"' AND chunk = 1"
 
     try:
-        #set_session_variables(cursor)
+        set_session_variables(cursor)
         cursor.execute(sql)
         db.commit()
     except:
@@ -133,12 +116,13 @@ def set_session_variables(cursor):
         cursor.execute('SET SESSION innodb_lock_wait_timeout = 1')
         cursor.execute('SET SESSION wait_timeout = 10000')
         cursor.execute("SET SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION'")
-        cursor.execute("SET @@binlog_format = 'STATEMENT'")
+
         cursor.execute('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ')
+        cursor.execute("SET @@binlog_format = 'STATEMENT'")
         cursor.execute('SET @@SQL_QUOTE_SHOW_CREATE = 1')
         return 1
     except :
-        print("账号可能没有Super权限")
+        print("账号可能没有Super权限！")
         return 0
 
 """
@@ -160,21 +144,21 @@ def get_SH_host():
     db.close()
     return  slave_list
 """
-def source(host,port,username,password):
+def source(host,port,username,password,dbname):
     # 打开数据库连接
-    db = MysqlInstance(host, username, password,None,port)
-    connect = db.connect()
+    db = pymysql.connect(host, username, password,None,port)
+
     # 使用 cursor() 方法创建一个游标对象 cursor
-    cursor = connect.cursor()
+    cursor = db.cursor()
 
     create_checksum_table(cursor)
 
-    tables=get_tables(cursor)
+    tables=get_tables(cursor,dbname)
 
-    for dbname,tabname in tables:
-        chunk_time = insert_checksums_table(db,cursor,dbname,tabname)
+    for tabschema,tabname in tables:
+        chunk_time = insert_checksums_table(db,tabschema,tabname)
         if chunk_time:
-            sql="select this_crc,this_cnt from percona.checksums where db='" +dbname+"' \
+            sql="select this_crc,this_cnt from percona.checksums where db='" +tabschema+"' \
             and tbl='"+tabname+"' and chunk=1"
 
             cursor.execute(sql)
@@ -188,27 +172,25 @@ def source(host,port,username,password):
             crc='0'
             count=0
 
-        update_checksum_table(db,cursor,chunk_time, crc, count, dbname, tabname)
+        update_checksum_table(db,chunk_time, crc, count, dbname, tabname)
 
     # 关闭数据库连接
     db.close()
 
 def target(host,port,username,password):
 
-    db = MysqlInstance(host, username, password, "percona",port)
-    connect = db.connect()
+    db = pymysql.connect(host, username, password, "percona",port)
+
 
     # 使用 cursor() 方法创建一个游标对象 cursor
-    cursor = connect.cursor()
+    cursor = db.cursor()
 
     sql="""SELECT
         CONCAT(db, '.', tbl)
         AS
         `table`, chunk, chunk_index, lower_boundary, upper_boundary, COALESCE(this_cnt - master_cnt, 0)
-        AS
-        cnt_diff, COALESCE(this_crc <> master_crc
-        OR
-        ISNULL(master_crc) <> ISNULL(this_crc), 0) AS
+        AS cnt_diff, COALESCE(this_crc <> master_crc
+        OR ISNULL(master_crc) <> ISNULL(this_crc), 0) AS
         crc_diff, this_cnt, master_cnt, this_crc, master_crc
         FROM `checksums`
         WHERE(master_cnt <> this_cnt
@@ -251,12 +233,13 @@ def encrypt(text,key):
 
 
 if __name__ == '__main__':
-    db = MysqlInstance("rm-bp16270lw98n23fy0po.mysql.rds.aliyuncs.com", "qauser", "Qauser123", "dmsdb",3306)
-    connect = db.connect()
-    # 使用 cursor() 方法创建一个游标对象 cursor
-    cursor = connect.cursor()
 
-    cursor.execute("SELECT id,host,port,username,password FROM `dmsdb`.`datasource` where name='hz_base_regiondb'")
+    db = pymysql.connect("rm-bp16270lw98n23fy0po.mysql.rds.aliyuncs.com", "qauser", "Qauser123", "dmsdb",3306)
+
+    # 使用 cursor() 方法创建一个游标对象 cursor
+    cursor = db.cursor()
+
+    cursor.execute("SELECT id,host,port,username,password FROM `dmsdb`.`datasource` where name='percona1'")
 
     s = cursor.fetchone()
 
@@ -271,7 +254,7 @@ if __name__ == '__main__':
     source_password = decrypt(s[4],key[:16])
 
 
-    source_db = 'hz_base_regiondb'
+
     cursor.execute("SELECT sid,host,port,username,password FROM `dmsdb`.`datasource` where main_id='"+str(source_id)+"'")
 
     t = cursor.fetchone()
@@ -286,13 +269,17 @@ if __name__ == '__main__':
     key = s1.digest()
     target_password = decrypt(t[4],key[:16])
 
-    source(source_host,source_port,source_username,source_password)
+    source(source_host,source_port,source_username,source_password,"percona")
 
 
     target(target_host,target_port,target_username,target_password)
 
 """                TS ERRORS    DIFFS     ROWS  CHUNKS SKIPPED   TIME TABLE
 04-15T14:14:27      0      5   262144       6       0   1.637    testdb.a
+ALTER TABLE `times` 
+	CHANGE COLUMN `a` `id` int(11) NOT NULL AUTO_INCREMENT FIRST,
+	DROP PRIMARY KEY,
+	ADD PRIMARY KEY(`id`);
 """
 
 
