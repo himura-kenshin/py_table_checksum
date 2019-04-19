@@ -2,10 +2,8 @@
 
 import pymysql
 import datetime
-from Crypto.Cipher import AES
-import binascii
 from hashlib import sha1
-
+from crypt import Crypt
 
 def get_table_cols(cursor,dbname,tabname):
 
@@ -172,15 +170,14 @@ def source(host,port,username,password,dbname):
             crc='0'
             count=0
 
-        update_checksum_table(db,chunk_time, crc, count, dbname, tabname)
+        update_checksum_table(db, chunk_time, crc, count, dbname, tabname)
 
     # 关闭数据库连接
     db.close()
 
 def target(host,port,username,password):
 
-    db = pymysql.connect(host, username, password, "percona",port)
-
+    db = pymysql.connect(host, username, password, "percona", port)
 
     # 使用 cursor() 方法创建一个游标对象 cursor
     cursor = db.cursor()
@@ -202,35 +199,6 @@ def target(host,port,username,password):
 
     db.close()
 
-#解密
-def decrypt(data, key):
-    """aes解密
-    :param key:
-    :param data:
-    """
-    cipher = AES.new(key, AES.MODE_ECB)
-    result = binascii.a2b_hex(data)  # 十六进制还原成二进制
-    decrypted = cipher.decrypt(result)
-    return decrypted.rstrip(b'\x10')  # 解密完成后将加密时添加的多余字符'\0'删除
-
-"""
-加密函数
-def encrypt(text,key):
-    cryptor = AES.new(key, AES.MODE_ECB)
-    # 这里密钥key 长度必须为16（AES-128）、24（AES-192）、或32（AES-256）Bytes 长度.目前AES-128足够用
-    length = 16
-    count = len(text)
-    if (count % length != 0):
-        add = length - (count % length)
-    else:
-        add = 0
-    text = text + ('\x10' * add)
-    ciphertext = cryptor.encrypt(text)
-        # 因为AES加密时候得到的字符串不一定是ascii字符集的，输出到终端或者保存时候可能存在问题
-        # 所以这里统一把加密后的字符串转化为16进制字符串
-    return binascii.b2a_hex(ciphertext)
-"""
-
 
 if __name__ == '__main__':
 
@@ -251,8 +219,7 @@ if __name__ == '__main__':
     s1 = sha1()
     s1.update(key.encode())
     key = s1.digest()
-    source_password = decrypt(s[4],key[:16])
-
+    source_password = Crypt.decrypt(s[4],key[:16])
 
 
     cursor.execute("SELECT sid,host,port,username,password FROM `dmsdb`.`datasource` where main_id='"+str(source_id)+"'")
@@ -263,11 +230,11 @@ if __name__ == '__main__':
     target_host = t[1]
     target_port = t[2]
     target_username = t[3]
-    key = target_host+target_username
+    key = target_host + target_username
     s1 = sha1()
     s1.update(key.encode())
     key = s1.digest()
-    target_password = decrypt(t[4],key[:16])
+    target_password = Crypt.decrypt(t[4],key[:16])
 
     source(source_host,source_port,source_username,source_password,"percona")
 
