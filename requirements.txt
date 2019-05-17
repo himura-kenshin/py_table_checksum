@@ -1,4 +1,4 @@
-pycrypto
 pymysql
 binascii
 hashlib
+pycryptodome

@@ -5,70 +5,32 @@ import datetime
 from hashlib import sha1
 from crypt import Crypt
 
-def get_table_cols(cursor,dbname,tabname):
+def get_clear_password(host,username,password):
+    key = host+username
+    s1 = sha1()
+    s1.update(key.encode())
+    key = s1.digest()
+    return Crypt.decrypt(password,key[:16])
 
-    sql = "select group_concat(concat('`',column_name,'`'))  from information_schema.COLUMNS \
-    where TABLE_SCHEMA='"+dbname+"' and table_name='"+tabname+"'"
-    try:
-        cursor.execute(sql)
-        result=cursor.fetchone()
-        return result[0]
-    except:
+def set_session_variables(cursor):
 
-        return  0
+    #SET @@binlog_format = 'STATEMENT'; 阿里云没有开发super权限账号,因此不支持
+    cursor.execute('SET SESSION innodb_lock_wait_timeout = 1')
+    cursor.execute('SET SESSION wait_timeout = 10000')
+    cursor.execute("SET SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION'")
 
-
-def get_tables(cursor,dbname):
-    sql="select a.TABLE_SCHEMA,a.TABLE_NAME from information_schema.TABLES a,information_schema.COLUMNS b \
-    where a.ENGINE='InnoDB' \
-    and a.table_schema ='"+dbname+"' \
-    and a.TABLE_NAME=b.TABLE_NAME \
-    and a.table_schema=b.table_schema \
-    and b.column_name='id'"
-    try:
-
-        cursor.execute(sql)
-        tables=cursor.fetchall()
-        return tables
-    except:
-        return 0
+    cursor.execute('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ')
+    cursor.execute("SET @@binlog_format = 'STATEMENT'")
+    cursor.execute('SET @@SQL_QUOTE_SHOW_CREATE = 1')
 
 
-def insert_checksums_table(db,dbname,tabname):
+def source(host,port,username,password,dbname):
+    # 打开数据库连接
+    db = pymysql.connect(host, username, password,None,port)
+
+    # 使用 cursor() 方法创建一个游标对象 cursor
     cursor = db.cursor()
-    cols=get_table_cols(cursor,dbname,tabname)
-
-    sql = "REPLACE INTO `percona`.`checksums` \
-            (db, tbl, chunk, chunk_index, lower_boundary, upper_boundary, this_cnt, this_crc) \
-            SELECT '" + dbname + "', '" + tabname + "', '1', 'PRIMARY', '1', '1000', COUNT(*) AS cnt, \
-            COALESCE(LOWER(CONV(BIT_XOR(CAST(CRC32(CONCAT_WS('#'," + cols + ")) AS UNSIGNED)), 10, 16)), 0) AS crc  \
-            FROM `" + dbname + "`.`" + tabname + "` FORCE INDEX(`PRIMARY`) WHERE ((`id` >= '1')) AND ((`id` <= '1000'))"
-
-    if cols:
-        try:
-            set_session_variables(cursor)
-            cursor.execute("select  @@binlog_format")
-            if cursor.fetchone()[0] == "STATEMENT":
-
-                starttime = datetime.datetime.now()
-
-                cursor.execute(sql)
-                db.commit()
-                endtime = datetime.datetime.now()
-
-                chunk_time=round(endtime.timestamp() - starttime.timestamp(),6)
-            else:
-                chunk_time = 0
-            return chunk_time
-        except:
-            db.rollback()
-
-            print(dbname + '.' + tabname + "表无主键，请添加主键！")
-            return 0
-
-
-def create_checksum_table(cursor):
-
+    # 创建checksum表
     sql="""CREATE TABLE if not exists percona.`checksums` (\
     `db` char(64) NOT NULL,\
     `tbl` char(64) NOT NULL,\
@@ -90,95 +52,93 @@ def create_checksum_table(cursor):
         cursor.execute("truncate percona.checksums")
     except:
         print("checksums表初始化失败！")
-        return 0
 
-
-def update_checksum_table(db,chunk_time,this_crc,this_cnt,dbname,tabname):
-    cursor = db.cursor()
-    sql="UPDATE `percona`.`checksums` \
-    SET chunk_time = '"+str(chunk_time)+"', master_crc = '"+this_crc+"', master_cnt = "+str(this_cnt)+" \
-    WHERE db = '"+dbname+"' AND tbl = '"+tabname+"' AND chunk = 1"
-
+    #获取目标库下需要比对的表清单
+    sql="select a.TABLE_SCHEMA,a.TABLE_NAME from information_schema.TABLES a,information_schema.COLUMNS b \
+    where a.ENGINE='InnoDB' \
+    and a.table_schema ='"+dbname+"' \
+    and a.TABLE_NAME=b.TABLE_NAME \
+    and a.table_schema=b.table_schema \
+    and b.column_name='id'"
     try:
-        set_session_variables(cursor)
+
         cursor.execute(sql)
-        db.commit()
+        chktablelist=cursor.fetchall()
     except:
+        chktablelist=[]
 
-        db.rollback()
+    #循环遍历表清单做数据分批次做checksum
+    for dbname,tname in chktablelist:
+        #获取表的所有字段
+        colsql = "select group_concat(concat('`',column_name,'`'))  from information_schema.COLUMNS \
+        where TABLE_SCHEMA='" + dbname + "' and table_name='" + tname + "'"
+        try:
+            cursor.execute(colsql)
+            result = cursor.fetchone()
+            cols= result[0]
+        except:
+            print('获取列失败！')
+            cols= None
 
-def set_session_variables(cursor):
+        #对本批次数据做checksum  插入到checksums表中
 
-    #SET @@binlog_format = 'STATEMENT'; 阿里云没有开发super权限账号,因此不支持
-    try:
-        cursor.execute('SET SESSION innodb_lock_wait_timeout = 1')
-        cursor.execute('SET SESSION wait_timeout = 10000')
-        cursor.execute("SET SQL_MODE = 'NO_AUTO_VALUE_ON_ZERO,NO_ENGINE_SUBSTITUTION'")
+        if cols:
+            sql = "REPLACE INTO `percona`.`checksums` \
+                    (db, tbl, chunk, chunk_index, lower_boundary, upper_boundary, this_cnt, this_crc) \
+                    SELECT '" + dbname + "', '" + tname + "', '1', 'PRIMARY', '1', '1000', COUNT(*) AS cnt, \
+                    COALESCE(LOWER(CONV(BIT_XOR(CAST(CRC32(CONCAT_WS('#'," + cols + ")) AS UNSIGNED)), 10, 16)), 0) AS crc  \
+                    FROM `" + dbname + "`.`" + tname + "` FORCE INDEX(`PRIMARY`) WHERE ((`id` >= '1')) AND ((`id` <= '1000'))"
+            #计算本批次任务执行时长
+            try:
+                set_session_variables(cursor)
+                cursor.execute("select  @@binlog_format")
+                if cursor.fetchone()[0] == "STATEMENT":
 
-        cursor.execute('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ')
-        cursor.execute("SET @@binlog_format = 'STATEMENT'")
-        cursor.execute('SET @@SQL_QUOTE_SHOW_CREATE = 1')
-        return 1
-    except :
-        print("账号可能没有Super权限！")
-        return 0
+                    starttime = datetime.datetime.now()
 
-"""
-def get_SH_host():
-    slave_list = []
-    db = pymysql.connect("192.168.1.154", "dbamgr", "De0ca71106a4e4d1")
+                    cursor.execute(sql)
+                    db.commit()
+                    endtime = datetime.datetime.now()
 
-    # 使用 cursor() 方法创建一个游标对象 cursor
-    cursor = db.cursor()
-    cursor.execute("show processlist")
+                    chunk_time = round(endtime.timestamp() - starttime.timestamp(), 6)
+                else:
+                    break
+            except:
+                db.rollback()
+                print(dbname + '.' + tname + "表无主键，请添加主键！")
+                break
 
-    for res in cursor.fetchall():
+            #获取本批次crc值和行数值
 
-        if re.match('Binlog Dump',res[4]):
-            host = res[2].split(':',1)[0]
-            slave_list.append(host)
-
-
-    db.close()
-    return  slave_list
-"""
-def source(host,port,username,password,dbname):
-    # 打开数据库连接
-    db = pymysql.connect(host, username, password,None,port)
-
-    # 使用 cursor() 方法创建一个游标对象 cursor
-    cursor = db.cursor()
-
-    create_checksum_table(cursor)
-
-    tables=get_tables(cursor,dbname)
-
-    for tabschema,tabname in tables:
-        chunk_time = insert_checksums_table(db,tabschema,tabname)
-        if chunk_time:
-            sql="select this_crc,this_cnt from percona.checksums where db='" +tabschema+"' \
-            and tbl='"+tabname+"' and chunk=1"
+            sql="select this_crc,this_cnt from percona.checksums where db='" +dbname+"' \
+            and tbl='"+tname+"' and chunk=1"
 
             cursor.execute(sql)
             results=cursor.fetchone()
 
-            crc=results[0]
+            this_crc=results[0]
 
-            count=results[1]
-        else:
-            chunk_time=0
-            crc='0'
-            count=0
+            this_cnt=results[1]
 
-        update_checksum_table(db, chunk_time, crc, count, dbname, tabname)
+
+            #更新checksums表中master_crc和master_cnt
+            sql = "UPDATE `percona`.`checksums` \
+            SET chunk_time = '" + str(chunk_time) + "', master_crc = '" + this_crc + "', master_cnt = " + str(this_cnt) + " \
+            WHERE db = '" + dbname + "' AND tbl = '" + tname + "' AND chunk = 1"
+
+            try:
+                cursor.execute(sql)
+                db.commit()
+            except:
+
+                db.rollback()
 
     # 关闭数据库连接
     db.close()
 
-def target(host,port,username,password):
+def target(host,port,username,password,dbname):
 
-    db = pymysql.connect(host, username, password, "percona", port)
-
+    db = pymysql.connect(host, username, password, dbname, port)
     # 使用 cursor() 方法创建一个游标对象 cursor
     cursor = db.cursor()
 
@@ -202,44 +162,39 @@ def target(host,port,username,password):
 
 if __name__ == '__main__':
 
-    db = pymysql.connect("rm-bp16270lw98n23fy0po.mysql.rds.aliyuncs.com", "qauser", "Qauser123", "dmsdb",3306)
+    # db = pymysql.connect("rm-bp16270lw98n23fy0po.mysql.rds.aliyuncs.com", "qauser", "Qauser123", "dmsdb",3306)
+    #
+    # # 使用 cursor() 方法创建一个游标对象 cursor
+    # cursor = db.cursor()
+    #
+    # cursor.execute("SELECT id,host,port,username,password FROM `dmsdb`.`datasource` where name='percona1'")
+    #
+    # s = cursor.fetchone()
+    #
+    # source_id = s[0]
+    # source_host = s[1]
+    # source_port = s[2]
+    # source_username = s[3]
+    # source_password = get_clear_password(source_host,source_username,s[4])
+    #
+    #
+    # cursor.execute("SELECT sid,host,port,username,password FROM `dmsdb`.`datasource` where main_id='"+str(source_id)+"'")
+    #
+    # t = cursor.fetchone()
+    #
+    # target_db = t[0]
+    # target_host = t[1]
+    # target_port = t[2]
+    # target_username = t[3]
+    # target_password = get_clear_password(target_host , target_username,t[4])
 
-    # 使用 cursor() 方法创建一个游标对象 cursor
-    cursor = db.cursor()
+    # source(source_host,source_port,source_username,source_password,"percona")
+    #
+    # target(target_host,target_port,target_username,target_password)
 
-    cursor.execute("SELECT id,host,port,username,password FROM `dmsdb`.`datasource` where name='percona1'")
+    source('192.168.1.141', 3306, 'dev', 'dev', "testdb")
 
-    s = cursor.fetchone()
-
-    source_id = s[0]
-    source_host = s[1]
-    source_port = s[2]
-    source_username = s[3]
-    key = source_host+source_username
-    s1 = sha1()
-    s1.update(key.encode())
-    key = s1.digest()
-    source_password = Crypt.decrypt(s[4],key[:16])
-
-
-    cursor.execute("SELECT sid,host,port,username,password FROM `dmsdb`.`datasource` where main_id='"+str(source_id)+"'")
-
-    t = cursor.fetchone()
-
-    target_db = t[0]
-    target_host = t[1]
-    target_port = t[2]
-    target_username = t[3]
-    key = target_host + target_username
-    s1 = sha1()
-    s1.update(key.encode())
-    key = s1.digest()
-    target_password = Crypt.decrypt(t[4],key[:16])
-
-    source(source_host,source_port,source_username,source_password,"percona")
-
-
-    target(target_host,target_port,target_username,target_password)
+    target('192.168.1.141',3307,'dev','dev',"percona")
 
 """                TS ERRORS    DIFFS     ROWS  CHUNKS SKIPPED   TIME TABLE
 04-15T14:14:27      0      5   262144       6       0   1.637    testdb.a
