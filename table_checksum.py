@@ -138,9 +138,18 @@ def source(host,port,username,password,dbname):
 
 def target(host,port,username,password,dbname):
 
-    db = pymysql.connect(host, username, password, dbname, port)
+    db = pymysql.connect(host=host, user=username, password=password, db=dbname, port=port)
     # 使用 cursor() 方法创建一个游标对象 cursor
     cursor = db.cursor()
+    # 查看主从同步状态有没有延迟
+    while True:
+        cmd = "show slave status"
+        cursor.execute(cmd)
+        result=cursor.fetchone()
+        Seconds_Behind_Master = result[32]
+        if Seconds_Behind_Master == 0:
+            break
+
 
     sql="""SELECT
         CONCAT(db, '.', tbl)
@@ -153,6 +162,7 @@ def target(host,port,username,password,dbname):
         WHERE(master_cnt <> this_cnt
         OR master_crc <> this_crc
         OR ISNULL(master_crc) <> ISNULL(this_crc))"""
+    print(sql)
     cursor.execute(sql)
     result=cursor.fetchall()
     print(result)
