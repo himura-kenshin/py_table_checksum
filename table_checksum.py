@@ -150,7 +150,7 @@ def target(host,port,username,password,dbname):
         if Seconds_Behind_Master == 0:
             break
 
-
+    #没有延迟的话从从库获取比对结果
     sql="""SELECT
         CONCAT(db, '.', tbl)
         AS
@@ -162,7 +162,7 @@ def target(host,port,username,password,dbname):
         WHERE(master_cnt <> this_cnt
         OR master_crc <> this_crc
         OR ISNULL(master_crc) <> ISNULL(this_crc))"""
-    print(sql)
+
     cursor.execute(sql)
     result=cursor.fetchall()
     print(result)
