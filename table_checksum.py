@@ -78,41 +78,55 @@ def source(host,port,username,password,dbname):
             cols= result[0]
         except:
             print('获取列失败！')
-            cols= None
-
+            break
+        #获取表的记录总数
+        cntsql = "select count(*) from " + dbname + "." + tname
+        try:
+            cursor.execute(cntsql)
+            result = cursor.fetchone()
+            count = result[0]
+        except:
+            print('获取表记录总数失败！')
+            break
         #对本批次数据做checksum  插入到checksums表中
+        chunk = 1
 
-        if cols:
+        for key in range(0,count,1000):
+
             sql = "REPLACE INTO `percona`.`checksums` \
                     (db, tbl, chunk, chunk_index, lower_boundary, upper_boundary, this_cnt, this_crc) \
-                    SELECT '" + dbname + "', '" + tname + "', '1', 'PRIMARY', '1', '1000', COUNT(*) AS cnt, \
+                    SELECT '" + dbname + "', '" + tname + "', "+ str(chunk) +", 'PRIMARY', "+ str(key) +", "+str(key+1000)+", COUNT(*) AS cnt, \
                     COALESCE(LOWER(CONV(BIT_XOR(CAST(CRC32(CONCAT_WS('#'," + cols + ")) AS UNSIGNED)), 10, 16)), 0) AS crc  \
-                    FROM `" + dbname + "`.`" + tname + "` FORCE INDEX(`PRIMARY`) WHERE ((`id` >= '1')) AND ((`id` <= '1000'))"
+                    FROM `" + dbname + "`.`" + tname + "` FORCE INDEX(`PRIMARY`) WHERE `id` between " + str(key) + " and " + str(key+1000)
             #计算本批次任务执行时长
+            chunk_time = 0
             try:
+                db.commit()
                 set_session_variables(cursor)
-                cursor.execute("select  @@binlog_format")
-                if cursor.fetchone()[0] == "STATEMENT":
-
-                    starttime = datetime.datetime.now()
-
-                    cursor.execute(sql)
-                    db.commit()
-                    endtime = datetime.datetime.now()
-
-                    chunk_time = round(endtime.timestamp() - starttime.timestamp(), 6)
-                else:
-                    break
             except:
-                db.rollback()
-                print(dbname + '.' + tname + "表无主键，请添加主键！")
+                print("session variables 设置失败！")
                 break
+            else:
+                try:
+                    cursor.execute("select  @@binlog_format")
+                    if cursor.fetchone()[0] == "STATEMENT":
+                        starttime = datetime.datetime.now()
 
+                        cursor.execute(sql)
+                        db.commit()
+                        endtime = datetime.datetime.now()
+                    else:
+                        print("binlog格式为更改成STATEMENT")
+                        break
+                except:
+                    db.rollback()
+                    print("checksum表插入失败！")
+                else:
+                    chunk_time = round(endtime.timestamp() - starttime.timestamp(), 6)
             #获取本批次crc值和行数值
 
             sql="select this_crc,this_cnt from percona.checksums where db='" +dbname+"' \
-            and tbl='"+tname+"' and chunk=1"
-
+            and tbl='"+tname+"' and chunk="+ str(chunk)
             cursor.execute(sql)
             results=cursor.fetchone()
 
@@ -124,11 +138,12 @@ def source(host,port,username,password,dbname):
             #更新checksums表中master_crc和master_cnt
             sql = "UPDATE `percona`.`checksums` \
             SET chunk_time = '" + str(chunk_time) + "', master_crc = '" + this_crc + "', master_cnt = " + str(this_cnt) + " \
-            WHERE db = '" + dbname + "' AND tbl = '" + tname + "' AND chunk = 1"
+            WHERE db = '" + dbname + "' AND tbl = '" + tname + "' AND chunk = "+ str(chunk)
 
             try:
                 cursor.execute(sql)
                 db.commit()
+                chunk += 1
             except:
 
                 db.rollback()
@@ -142,12 +157,15 @@ def target(host,port,username,password,dbname):
     # 使用 cursor() 方法创建一个游标对象 cursor
     cursor = db.cursor()
     # 查看主从同步状态有没有延迟
-    while True:
+    cnt = 0
+    for i in range(10):
         cmd = "show slave status"
         cursor.execute(cmd)
         result=cursor.fetchone()
         Seconds_Behind_Master = result[32]
         if Seconds_Behind_Master == 0:
+            cnt+=1
+        if cnt > 5:
             break
 
     #没有延迟的话从从库获取比对结果
