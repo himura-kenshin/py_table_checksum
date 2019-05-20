@@ -95,13 +95,13 @@ def source(host,port,username,password,dbname):
         for key in range(1,maxid,10000):
             endkey = key + 9999
             if endkey > maxid:
-                sql = "REPLACE INTO `percona`.`checksums` \
+                checksum_dml = "REPLACE INTO `percona`.`checksums` \
                                     (db, tbl, chunk, chunk_index, lower_boundary, upper_boundary, this_cnt, this_crc) \
                                     SELECT '" + dbname + "', '" + tname + "', " + str(chunk) + ", 'PRIMARY', " + str(maxid) + ", NULL, COUNT(*) AS cnt, \
                                     0 AS crc  \
                                     FROM `" + dbname + "`.`" + tname + "` FORCE INDEX(`PRIMARY`) WHERE `id` >"+ str(maxid)
             elif endkey< maxid and key+20000> maxid:
-                sql = "REPLACE INTO `percona`.`checksums` \
+                checksum_dml = "REPLACE INTO `percona`.`checksums` \
                                     (db, tbl, chunk, chunk_index, lower_boundary, upper_boundary, this_cnt, this_crc) \
                                     SELECT '" + dbname + "', '" + tname + "', " + str(chunk) + ", 'PRIMARY', " + str(
                     key) + ", " + str(maxid) + ", COUNT(*) AS cnt, \
@@ -109,7 +109,7 @@ def source(host,port,username,password,dbname):
                                     FROM `" + dbname + "`.`" + tname + "` FORCE INDEX(`PRIMARY`) WHERE `id` between " + str(
                     key) + " and " + str(maxid)
             else:
-                sql = "REPLACE INTO `percona`.`checksums` \
+                checksum_dml = "REPLACE INTO `percona`.`checksums` \
                     (db, tbl, chunk, chunk_index, lower_boundary, upper_boundary, this_cnt, this_crc) \
                     SELECT '" + dbname + "', '" + tname + "', "+ str(chunk) +", 'PRIMARY', "+ str(key) +", "+str(endkey)+", COUNT(*) AS cnt, \
                     COALESCE(LOWER(CONV(BIT_XOR(CAST(CRC32(CONCAT_WS('#'," + cols + ")) AS UNSIGNED)), 10, 16)), 0) AS crc  \
@@ -129,7 +129,7 @@ def source(host,port,username,password,dbname):
                     if cursor.fetchone()[0] == "STATEMENT":
                         starttime = datetime.datetime.now()
 
-                        cursor.execute(sql)
+                        cursor.execute(checksum_dml)
                         db.commit()
                         endtime = datetime.datetime.now()
                     else:
@@ -197,7 +197,8 @@ def target(host,port,username,password,dbname):
         FROM `checksums`
         WHERE(master_cnt <> this_cnt
         OR master_crc <> this_crc
-        OR ISNULL(master_crc) <> ISNULL(this_crc) and lower_boundary is not null and upper_boundary is not null)"""
+        OR ISNULL(master_crc) <> ISNULL(this_crc) )
+        group by db,tbl"""
 
     cursor.execute(descsql)
     diffs=cursor.fetchall()
@@ -251,10 +252,10 @@ if __name__ == '__main__':
 04-15T14:14:27      0      5   262144       6       0   1.637  testdb.a
             TS ERRORS  DIFFS     ROWS  CHUNKS SKIPPED    TIME TABLE
 05-20T14:23:29      0      0     3329       4       0   0.353 testdb.a
-ALTER TABLE `times` 
-	CHANGE COLUMN `a` `id` int(11) NOT NULL AUTO_INCREMENT FIRST,
-	DROP PRIMARY KEY,
-	ADD PRIMARY KEY(`id`);
+REPLACE INTO `percona`.`checksums` (db, tbl, chunk, chunk_index, lower_boundary, upper_boundary, this_cnt, this_crc) 
+SELECT 'testdb', 'a', '1', 'PRIMARY', '1', '1000', COUNT(*) AS cnt,
+ COALESCE(LOWER(CONV(BIT_XOR(CAST(CRC32(CONCAT_WS('#', `a`, convert(`b` using utf8mb4), `id`, CONCAT(ISNULL(`a`), ISNULL(`b`)))) AS UNSIGNED)), 10, 16)), 0) AS crc 
+ FROM `testdb`.`a` FORCE INDEX(`PRIMARY`) WHERE ((`id` >= '1')) AND ((`id` <= '1000')) /*checksum chunk*/
 """
 
 

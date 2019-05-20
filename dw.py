@@ -11,7 +11,7 @@ db = pymysql.connect(host='192.168.1.141',port=3307,user='dev',password='dev',db
 corsor = db.cursor()
 
 while True:
-    sql= "insert into a (a,b) values (floor(rand()*100),'aaa')"
-
+    #sql= "insert into a (a,b) values (floor(rand()*100),'aaa')"
+    sql = "update a set b='cccc' where a=floor(rand()*100)"
     corsor.execute(sql)
     db.commit()
