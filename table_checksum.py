@@ -81,24 +81,24 @@ def source(host,port,username,password,dbname):
             print('获取列失败！')
             break
         #获取表的记录总数
-        cntsql = "select count(*) from " + dbname + "." + tname
+        cntsql = "select max(id) from " + dbname + "." + tname
         try:
             cursor.execute(cntsql)
             result = cursor.fetchone()
-            count = result[0]
+            maxid = result[0]
         except:
-            print('获取表记录总数失败！')
+            print('获取当前最大id！')
             break
         #对本批次数据做checksum  插入到checksums表中
         chunk = 1
 
-        for key in range(0,count,1000):
+        for key in range(1,maxid,10000):
 
             sql = "REPLACE INTO `percona`.`checksums` \
                     (db, tbl, chunk, chunk_index, lower_boundary, upper_boundary, this_cnt, this_crc) \
-                    SELECT '" + dbname + "', '" + tname + "', "+ str(chunk) +", 'PRIMARY', "+ str(key) +", "+str(key+1000)+", COUNT(*) AS cnt, \
+                    SELECT '" + dbname + "', '" + tname + "', "+ str(chunk) +", 'PRIMARY', "+ str(key) +", "+str(key+9999)+", COUNT(*) AS cnt, \
                     COALESCE(LOWER(CONV(BIT_XOR(CAST(CRC32(CONCAT_WS('#'," + cols + ")) AS UNSIGNED)), 10, 16)), 0) AS crc  \
-                    FROM `" + dbname + "`.`" + tname + "` FORCE INDEX(`PRIMARY`) WHERE `id` between " + str(key) + " and " + str(key+1000)
+                    FROM `" + dbname + "`.`" + tname + "` FORCE INDEX(`PRIMARY`) WHERE `id` between " + str(key) + " and " + str(key+9999)
             #计算本批次任务执行时长
             chunk_time = 0
             try:
@@ -166,12 +166,12 @@ def target(host,port,username,password,dbname):
         Seconds_Behind_Master = result[32]
         if Seconds_Behind_Master == 0:
             cnt+=1
-            time.sleep(2)
         if cnt > 5:
             break
+        time.sleep(2)
 
     #没有延迟的话从从库获取比对结果
-    sql="""SELECT
+    descsql="""SELECT
         CONCAT(db, '.', tbl)
         AS
         `table`, chunk, chunk_index, lower_boundary, upper_boundary, COALESCE(this_cnt - master_cnt, 0)
@@ -183,8 +183,12 @@ def target(host,port,username,password,dbname):
         OR master_crc <> this_crc
         OR ISNULL(master_crc) <> ISNULL(this_crc))"""
 
+    cursor.execute(descsql)
+    diffs=cursor.fetchall()
+
+    sql="select max(ts) as TS, "+ str(len(diffs)) +" as DIFFS,sum(master_cnt) as ROWS, max(chunk) as CHUNKS,round(sum(chunk_time),3) as TIME,concat(db,'.',tbl) as  'TABLE'  from checksums"
     cursor.execute(sql)
-    result=cursor.fetchall()
+    result = cursor.fetchall()
     print(result)
 
     db.close()
@@ -226,8 +230,10 @@ if __name__ == '__main__':
 
     target('192.168.1.141',3307,'dev','dev',"percona")
 
-"""                TS ERRORS    DIFFS     ROWS  CHUNKS SKIPPED   TIME TABLE
-04-15T14:14:27      0      5   262144       6       0   1.637    testdb.a
+"""         TS ERRORS  DIFFS     ROWS  CHUNKS SKIPPED    TIME  TABLE
+04-15T14:14:27      0      5   262144       6       0   1.637  testdb.a
+            TS ERRORS  DIFFS     ROWS  CHUNKS SKIPPED    TIME TABLE
+05-20T14:23:29      0      0     3329       4       0   0.353 testdb.a
 ALTER TABLE `times` 
 	CHANGE COLUMN `a` `id` int(11) NOT NULL AUTO_INCREMENT FIRST,
 	DROP PRIMARY KEY,
