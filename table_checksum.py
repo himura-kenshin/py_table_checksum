@@ -188,9 +188,7 @@ def target(host,port,username,password,dbname):
 
     #没有延迟的话从从库获取比对结果
     descsql="""SELECT
-        CONCAT(db, '.', tbl)
-        AS
-        `table`, chunk, chunk_index, lower_boundary, upper_boundary, COALESCE(this_cnt - master_cnt, 0)
+        CONCAT(db, '.', tbl) AS `table`, chunk, chunk_index, lower_boundary, upper_boundary, COALESCE(this_cnt - master_cnt, 0)
         AS cnt_diff, COALESCE(this_crc <> master_crc
         OR ISNULL(master_crc) <> ISNULL(this_crc), 0) AS
         crc_diff, this_cnt, master_cnt, this_crc, master_crc
@@ -203,7 +201,8 @@ def target(host,port,username,password,dbname):
     cursor.execute(descsql)
     diffs=cursor.fetchall()
 
-    sql="select max(ts) as TS, "+ str(len(diffs)) +" as DIFFS,sum(master_cnt) as ROWS, max(chunk) as CHUNKS,round(sum(chunk_time),3) as TIME,concat(db,'.',tbl) as  'TABLE'  from checksums"
+    sql="select max(ts) as TS, "+ str(len(diffs)) +" as DIFFS,sum(master_cnt) as ROWS, max(chunk) as CHUNKS,\
+         round(sum(chunk_time),3) as TIME,concat(db,'.',tbl) as  'TABLE'  from checksums"
     cursor.execute(sql)
     result = cursor.fetchall()
     print(result)
