@@ -93,12 +93,28 @@ def source(host,port,username,password,dbname):
         chunk = 1
 
         for key in range(1,maxid,10000):
-
-            sql = "REPLACE INTO `percona`.`checksums` \
+            endkey = key + 9999
+            if endkey > maxid:
+                sql = "REPLACE INTO `percona`.`checksums` \
+                                    (db, tbl, chunk, chunk_index, lower_boundary, upper_boundary, this_cnt, this_crc) \
+                                    SELECT '" + dbname + "', '" + tname + "', " + str(chunk) + ", 'PRIMARY', " + str(maxid) + ", NULL, COUNT(*) AS cnt, \
+                                    0 AS crc  \
+                                    FROM `" + dbname + "`.`" + tname + "` FORCE INDEX(`PRIMARY`) WHERE `id` >"+ str(maxid)
+            elif endkey< maxid and key+20000> maxid:
+                sql = "REPLACE INTO `percona`.`checksums` \
+                                    (db, tbl, chunk, chunk_index, lower_boundary, upper_boundary, this_cnt, this_crc) \
+                                    SELECT '" + dbname + "', '" + tname + "', " + str(chunk) + ", 'PRIMARY', " + str(
+                    key) + ", " + str(maxid) + ", COUNT(*) AS cnt, \
+                                    COALESCE(LOWER(CONV(BIT_XOR(CAST(CRC32(CONCAT_WS('#'," + cols + ")) AS UNSIGNED)), 10, 16)), 0) AS crc  \
+                                    FROM `" + dbname + "`.`" + tname + "` FORCE INDEX(`PRIMARY`) WHERE `id` between " + str(
+                    key) + " and " + str(maxid)
+            else:
+                sql = "REPLACE INTO `percona`.`checksums` \
                     (db, tbl, chunk, chunk_index, lower_boundary, upper_boundary, this_cnt, this_crc) \
-                    SELECT '" + dbname + "', '" + tname + "', "+ str(chunk) +", 'PRIMARY', "+ str(key) +", "+str(key+9999)+", COUNT(*) AS cnt, \
+                    SELECT '" + dbname + "', '" + tname + "', "+ str(chunk) +", 'PRIMARY', "+ str(key) +", "+str(endkey)+", COUNT(*) AS cnt, \
                     COALESCE(LOWER(CONV(BIT_XOR(CAST(CRC32(CONCAT_WS('#'," + cols + ")) AS UNSIGNED)), 10, 16)), 0) AS crc  \
-                    FROM `" + dbname + "`.`" + tname + "` FORCE INDEX(`PRIMARY`) WHERE `id` between " + str(key) + " and " + str(key+9999)
+                    FROM `" + dbname + "`.`" + tname + "` FORCE INDEX(`PRIMARY`) WHERE `id` between " + str(key) + " and " + str(endkey)
+
             #计算本批次任务执行时长
             chunk_time = 0
             try:
@@ -166,9 +182,9 @@ def target(host,port,username,password,dbname):
         Seconds_Behind_Master = result[32]
         if Seconds_Behind_Master == 0:
             cnt+=1
-        if cnt > 5:
+        if cnt > 3:
             break
-        time.sleep(2)
+        time.sleep(1)
 
     #没有延迟的话从从库获取比对结果
     descsql="""SELECT
@@ -181,7 +197,7 @@ def target(host,port,username,password,dbname):
         FROM `checksums`
         WHERE(master_cnt <> this_cnt
         OR master_crc <> this_crc
-        OR ISNULL(master_crc) <> ISNULL(this_crc))"""
+        OR ISNULL(master_crc) <> ISNULL(this_crc) and lower_boundary is not null and upper_boundary is not null)"""
 
     cursor.execute(descsql)
     diffs=cursor.fetchall()
@@ -190,6 +206,7 @@ def target(host,port,username,password,dbname):
     cursor.execute(sql)
     result = cursor.fetchall()
     print(result)
+    print(diffs)
 
     db.close()
 
