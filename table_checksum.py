@@ -2,6 +2,7 @@
 
 import pymysql
 import datetime
+import time
 from hashlib import sha1
 from crypt import Crypt
 
@@ -158,13 +159,14 @@ def target(host,port,username,password,dbname):
     cursor = db.cursor()
     # 查看主从同步状态有没有延迟
     cnt = 0
-    for i in range(10):
+    for i in range(100):
         cmd = "show slave status"
         cursor.execute(cmd)
         result=cursor.fetchone()
         Seconds_Behind_Master = result[32]
         if Seconds_Behind_Master == 0:
             cnt+=1
+            time.sleep(2)
         if cnt > 5:
             break
 
