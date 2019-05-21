@@ -3,15 +3,7 @@
 import pymysql
 import datetime
 import time
-from hashlib import sha1
-from crypt import Crypt
 
-def get_clear_password(host,username,password):
-    key = host+username
-    s1 = sha1()
-    s1.update(key.encode())
-    key = s1.digest()
-    return Crypt.decrypt(password,key[:16])
 
 def set_session_variables(cursor):
 
@@ -173,12 +165,17 @@ def target(host,port,username,password,dbname):
     db = pymysql.connect(host=host, user=username, password=password, db=dbname, port=port)
     # 使用 cursor() 方法创建一个游标对象 cursor
     cursor = db.cursor()
-    # 查看主从同步状态有没有延迟
+    # 查看主从同步状态是否正常有没有延迟
     cnt = 0
     for i in range(100):
         cmd = "show slave status"
         cursor.execute(cmd)
         result=cursor.fetchone()
+        Slave_IO_Running = result[10]
+        Slave_SQL_Running = result[11]
+        if Slave_IO_Running == 'NO' or Slave_SQL_Running == 'NO':
+            return "主从复制异常！" , None
+
         Seconds_Behind_Master = result[32]
         if Seconds_Behind_Master == 0:
             cnt+=1
@@ -188,10 +185,10 @@ def target(host,port,username,password,dbname):
 
     #没有延迟的话从从库获取比对结果
     descsql="""SELECT
-        CONCAT(db, '.', tbl) AS `table`, chunk, chunk_index, lower_boundary, upper_boundary, COALESCE(this_cnt - master_cnt, 0)
+        CONCAT(db, '.', tbl) AS `table`, chunk, chunk_index, lower_boundary, upper_boundary,cast( COALESCE(this_cnt - master_cnt, 0) as char)
         AS cnt_diff, COALESCE(this_crc <> master_crc
         OR ISNULL(master_crc) <> ISNULL(this_crc), 0) AS
-        crc_diff, this_cnt, master_cnt, this_crc, master_crc
+        crc_diff, cast(this_cnt as char), cast(master_cnt as char), this_crc, master_crc
         FROM `checksums`
         WHERE(master_cnt <> this_cnt
         OR master_crc <> this_crc
@@ -201,51 +198,23 @@ def target(host,port,username,password,dbname):
     cursor.execute(descsql)
     diffs=cursor.fetchall()
 
-    sql="select max(ts) as TS, "+ str(len(diffs)) +" as DIFFS,sum(master_cnt) as ROWS, max(chunk) as CHUNKS,\
-         round(sum(chunk_time),3) as TIME,concat(db,'.',tbl) as  'TABLE'  from checksums"
+    sql="select date_format(max(ts),'%Y-%m-%d %H:%I:%S') as TS, "+ str(len(diffs)) +" as DIFFS,cast(sum(master_cnt) AS   CHAR) as ROWS, max(chunk) as CHUNKS,round(sum(chunk_time),3) as TIME,concat(db,'.',tbl) as  'TABLE'  from checksums"
     cursor.execute(sql)
     result = cursor.fetchall()
-    print(result)
-    print(diffs)
 
     db.close()
 
+    return result,diffs
 
-if __name__ == '__main__':
 
-    # db = pymysql.connect("rm-bp16270lw98n23fy0po.mysql.rds.aliyuncs.com", "qauser", "Qauser123", "dmsdb",3306)
-    #
-    # # 使用 cursor() 方法创建一个游标对象 cursor
-    # cursor = db.cursor()
-    #
-    # cursor.execute("SELECT id,host,port,username,password FROM `dmsdb`.`datasource` where name='percona1'")
-    #
-    # s = cursor.fetchone()
-    #
-    # source_id = s[0]
-    # source_host = s[1]
-    # source_port = s[2]
-    # source_username = s[3]
-    # source_password = get_clear_password(source_host,source_username,s[4])
-    #
-    #
-    # cursor.execute("SELECT sid,host,port,username,password FROM `dmsdb`.`datasource` where main_id='"+str(source_id)+"'")
-    #
-    # t = cursor.fetchone()
-    #
-    # target_db = t[0]
-    # target_host = t[1]
-    # target_port = t[2]
-    # target_username = t[3]
-    # target_password = get_clear_password(target_host , target_username,t[4])
+def do(argv):
 
-    # source(source_host,source_port,source_username,source_password,"percona")
-    #
-    # target(target_host,target_port,target_username,target_password)
+    source(argv['m_host'], argv['m_port'], argv['m_user'], argv['m_password'], argv['m_db'])
 
-    source('192.168.1.141', 3306, 'dev', 'dev', "testdb")
+    result, diffs = target(argv['s_host'], argv['s_port'], argv['s_user'], argv['s_password'], "percona")
+    print(result, diffs)
+    return result, diffs
 
-    target('192.168.1.141',3307,'dev','dev',"percona")
 
 """         TS ERRORS  DIFFS     ROWS  CHUNKS SKIPPED    TIME  TABLE
 04-15T14:14:27      0      5   262144       6       0   1.637  testdb.a

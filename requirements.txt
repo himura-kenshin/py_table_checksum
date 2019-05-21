@@ -2,3 +2,5 @@ pymysql
 binascii
 hashlib
 pycryptodome
+tornado
+supervisor

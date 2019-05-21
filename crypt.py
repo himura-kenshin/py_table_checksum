@@ -11,7 +11,7 @@ class Crypt:
         cipher = AES.new(key, AES.MODE_ECB)
         result = binascii.a2b_hex(data)  # 十六进制还原成二进制
         decrypted = cipher.decrypt(result)
-        return decrypted.rstrip(b'\x10')  # 解密完成后将加密时添加的多余字符'\0'删除
+        return decrypted.rstrip(b'\r\x06\x05\x07\x10\x02\x03\x04\x08\x09\x01').decode('utf-8')  # 解密完成后将加密时添加的多余字符'\0'删除
 
 
     def encrypt(text,key):
