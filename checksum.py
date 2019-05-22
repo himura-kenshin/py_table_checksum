@@ -179,9 +179,10 @@ def target(host,port,username,password,dbname):
         Seconds_Behind_Master = result[32]
         if Seconds_Behind_Master == 0:
             cnt+=1
-        if cnt > 3:
+            time.sleep(2)
+        if cnt > 5:
             break
-        time.sleep(1)
+
 
     #没有延迟的话从从库获取比对结果
     descsql="""SELECT
@@ -192,8 +193,7 @@ def target(host,port,username,password,dbname):
         FROM `checksums`
         WHERE(master_cnt <> this_cnt
         OR master_crc <> this_crc
-        OR ISNULL(master_crc) <> ISNULL(this_crc) )
-        group by db,tbl"""
+        OR ISNULL(master_crc) <> ISNULL(this_crc) )"""
 
     cursor.execute(descsql)
     diffs=cursor.fetchall()
@@ -216,14 +216,6 @@ def do(argv):
     return result, diffs
 
 
-"""         TS ERRORS  DIFFS     ROWS  CHUNKS SKIPPED    TIME  TABLE
-04-15T14:14:27      0      5   262144       6       0   1.637  testdb.a
-            TS ERRORS  DIFFS     ROWS  CHUNKS SKIPPED    TIME TABLE
-05-20T14:23:29      0      0     3329       4       0   0.353 testdb.a
-REPLACE INTO `percona`.`checksums` (db, tbl, chunk, chunk_index, lower_boundary, upper_boundary, this_cnt, this_crc) 
-SELECT 'testdb', 'a', '1', 'PRIMARY', '1', '1000', COUNT(*) AS cnt,
- COALESCE(LOWER(CONV(BIT_XOR(CAST(CRC32(CONCAT_WS('#', `a`, convert(`b` using utf8mb4), `id`, CONCAT(ISNULL(`a`), ISNULL(`b`)))) AS UNSIGNED)), 10, 16)), 0) AS crc 
- FROM `testdb`.`a` FORCE INDEX(`PRIMARY`) WHERE ((`id` >= '1')) AND ((`id` <= '1000')) /*checksum chunk*/
-"""
+
 
 

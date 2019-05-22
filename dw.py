@@ -12,6 +12,6 @@ corsor = db.cursor()
 
 while True:
     #sql= "insert into a (a,b) values (floor(rand()*100),'aaa')"
-    sql = "update a set b='cccc' where a=floor(rand()*100)"
+    sql = "update a set b='aaaaaaaaaaaaaaaa' where a=floor(rand()*100)"
     corsor.execute(sql)
     db.commit()

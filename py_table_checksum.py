@@ -24,7 +24,6 @@ http://127.0.0.1:8868/tablechecksum?mhost=192.168.1.141&mport=3306&muser=dev&mpa
 
 def get_clear_password(host, user, password):
     key = host + user
-
     s1 = sha1()
     s1.update(key.encode())
     key = s1.digest()
