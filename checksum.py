@@ -16,6 +16,24 @@ def set_session_variables(cursor):
     cursor.execute("SET @@binlog_format = 'STATEMENT'")
     cursor.execute('SET @@SQL_QUOTE_SHOW_CREATE = 1')
 
+def check_repl_lag(cur):
+    cnt = 0
+    for i in range(100):
+        cmd = "show slave status"
+        cur.execute(cmd)
+        result=cur.fetchone()
+        Slave_IO_Running = result[10]
+        Slave_SQL_Running = result[11]
+        if Slave_IO_Running == 'NO' or Slave_SQL_Running == 'NO':
+            return True
+
+        Seconds_Behind_Master = result[32]
+        if Seconds_Behind_Master == 0:
+            cnt+=1
+            time.sleep(2)
+        if cnt > 5:
+            return False
+
 
 def source(host,port,username,password,dbname):
     # 打开数据库连接
@@ -166,23 +184,8 @@ def target(host,port,username,password,dbname):
     # 使用 cursor() 方法创建一个游标对象 cursor
     cursor = db.cursor()
     # 查看主从同步状态是否正常有没有延迟
-    cnt = 0
-    for i in range(100):
-        cmd = "show slave status"
-        cursor.execute(cmd)
-        result=cursor.fetchone()
-        Slave_IO_Running = result[10]
-        Slave_SQL_Running = result[11]
-        if Slave_IO_Running == 'NO' or Slave_SQL_Running == 'NO':
-            return "主从复制异常！" , None
-
-        Seconds_Behind_Master = result[32]
-        if Seconds_Behind_Master == 0:
-            cnt+=1
-            time.sleep(2)
-        if cnt > 5:
-            break
-
+    if  check_repl_lag(cursor):
+        return "主从复制中断！" ,None
 
     #没有延迟的话从从库获取比对结果
     descsql="""SELECT
