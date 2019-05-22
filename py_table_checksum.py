@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-  
+# -*- coding: utf-8 -*-
 from tornado.web import RequestHandler, Application
 from tornado.ioloop import IOLoop
 import tornado.options
@@ -29,9 +29,11 @@ def get_clear_password(host, user, password):
     key = s1.digest()
     return Crypt.decrypt(password, key[:16])
 
+
 def sig_handler(sig, frame):
     logging.warning('Caught signal: %s', sig)
     tornado.ioloop.IOLoop.instance().add_callback(shutdown)
+
 
 def shutdown():
     logging.info('Stopping http server')
@@ -52,6 +54,7 @@ def shutdown():
 
     stop_loop()
 
+
 class DateEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, datetime.datetime):
@@ -65,22 +68,25 @@ class DateEncoder(json.JSONEncoder):
 class TableChecksumHandler(RequestHandler):
     def get(self):
         dic = dict(
-        m_host = self.get_argument('mhost'),
-        m_port = int(self.get_argument('mport')),
-        m_user = self.get_argument('muser'),
-
-        m_password = get_clear_password(self.get_argument('mhost'), self.get_argument('muser'),
-                                                      self.get_argument('mpasswd')),
-        m_db = self.get_argument('mdb'),
-        s_host = self.get_argument('shost'),
-        s_port = int(self.get_argument('sport')),
-        s_user = self.get_argument('suser'),
-        s_password = get_clear_password(self.get_argument('shost'), self.get_argument('suser'),
-                                        self.get_argument('spasswd'))
-        )
+            m_host=self.get_argument('mhost'),
+            m_port=int(
+                self.get_argument('mport')),
+            m_user=self.get_argument('muser'),
+            m_password=get_clear_password(
+                self.get_argument('mhost'),
+                self.get_argument('muser'),
+                self.get_argument('mpasswd')),
+            m_db=self.get_argument('mdb'),
+            s_host=self.get_argument('shost'),
+            s_port=int(
+                self.get_argument('sport')),
+            s_user=self.get_argument('suser'),
+            s_password=get_clear_password(
+                self.get_argument('shost'),
+                self.get_argument('suser'),
+                self.get_argument('spasswd')))
 
         check, diffs = checksum.do(dic)
-
 
         result = {
             'res': 1,
@@ -90,14 +96,16 @@ class TableChecksumHandler(RequestHandler):
             }
         }
 
-
-        self.write(json.dumps(result,cls=DateEncoder))
-
+        self.write(json.dumps(result, cls=DateEncoder))
 
 
 if __name__ == '__main__':
 
-    tornado.options.define('port', default=8871, type=int, help="this is the port >for application")
+    tornado.options.define(
+        'port',
+        default=8871,
+        type=int,
+        help="this is the port >for application")
 
     app = Application(
         [
@@ -122,4 +130,3 @@ if __name__ == '__main__':
         IOLoop.current().start()
 
         logging.info("Exit...")
-
